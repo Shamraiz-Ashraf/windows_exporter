@@ -1,0 +1,30 @@
+# High-Throughput Stream Configuration
+# This file configures the sender and receiver for optimal performance
+
+# Network configuration
+network:
+  local_addr: "0.0.0.0"
+  remote_addr: "localhost"
+  port: 8080
+
+# Performance configuration
+performance:
+  buffer_size: 1048576  # 1MB buffer
+  packet_size: 8192     # 8KB packets for optimal throughput
+  window_size: 1000     # Sliding window size
+
+# Forward Error Correction (FEC) configuration
+fec:
+  enable: false         # Set to true to enable FEC
+  redundancy: 0.2       # 20% redundancy for error correction
+
+# Timing configuration
+timing:
+  timeout: 30s          # Connection timeout
+  retry_interval: 100ms # Packet retransmission interval
+  heartbeat_interval: 1s # Heartbeat interval
+
+# Logging configuration
+logging:
+  level: "info"         # debug, info, warn, error
+  enable_metrics: true  # Enable performance metrics
