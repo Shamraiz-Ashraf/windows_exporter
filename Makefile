@@ -1,128 +1,151 @@
-# High-Throughput Stream Makefile
+# Makefile for High-Throughput UDP Stream System
 
-# Build configuration
-BINARY_DIR = bin
-SENDER_BINARY = $(BINARY_DIR)/sender
-RECEIVER_BINARY = $(BINARY_DIR)/receiver
+# Compiler and flags
+CXX = g++
+CXXFLAGS = -std=c++17 -Wall -Wextra -O3 -march=native -mtune=native
+CXXFLAGS += -DNDEBUG -fomit-frame-pointer
+CXXFLAGS += -pthread
 
-# Go configuration
-GO = go
-GOFLAGS = -ldflags="-s -w" # Strip debug info for smaller binaries
+# Debug flags (uncomment for debugging)
+# CXXFLAGS = -std=c++17 -Wall -Wextra -g -O0 -DDEBUG -pthread
 
-# Build targets
-.PHONY: all build clean sender receiver test help
+# Directories
+SRCDIR = src
+BINDIR = bin
+OBJDIR = obj
 
-all: build
+# Source files
+SOURCES = $(wildcard $(SRCDIR)/*.cpp)
+OBJECTS = $(SOURCES:$(SRCDIR)/%.cpp=$(OBJDIR)/%.o)
 
-build: $(BINARY_DIR) sender receiver
+# Executables
+SENDER = $(BINDIR)/sender
+RECEIVER = $(BINDIR)/receiver
 
-$(BINARY_DIR):
-	mkdir -p $(BINARY_DIR)
+# Default target
+all: $(SENDER) $(RECEIVER)
 
-sender: $(BINARY_DIR)
-	$(GO) build $(GOFLAGS) -o $(SENDER_BINARY) ./cmd/sender
+# Create directories
+$(BINDIR):
+	mkdir -p $(BINDIR)
 
-receiver: $(BINARY_DIR)
-	$(GO) build $(GOFLAGS) -o $(RECEIVER_BINARY) ./cmd/receiver
+$(OBJDIR):
+	mkdir -p $(OBJDIR)
 
-# Development targets
-dev-sender:
-	$(GO) run ./cmd/sender -input=test.bin -remote=localhost -port=8080 -verbose
+# Build sender
+$(SENDER): $(OBJDIR)/main_sender.o $(OBJDIR)/udp_sender.o $(OBJDIR)/utils.o
+	$(CXX) $(CXXFLAGS) -o $@ $^
 
-dev-receiver:
-	$(GO) run ./cmd/receiver -output=received.bin -local=0.0.0.0 -port=8080 -verbose
+# Build receiver
+$(RECEIVER): $(OBJDIR)/main_receiver.o $(OBJDIR)/udp_receiver.o $(OBJDIR)/utils.o
+	$(CXX) $(CXXFLAGS) -o $@ $^
+
+# Compile source files
+$(OBJDIR)/%.o: $(SRCDIR)/%.cpp | $(OBJDIR)
+	$(CXX) $(CXXFLAGS) -c -o $@ $<
+
+# Clean build artifacts
+clean:
+	rm -rf $(OBJDIR) $(BINDIR)
+
+# Install dependencies (for Ubuntu/Debian)
+install-deps:
+	sudo apt-get update
+	sudo apt-get install -y build-essential g++ make
 
 # Test targets
-test:
-	$(GO) test -v ./pkg/stream/...
+test: $(SENDER) $(RECEIVER)
+	@echo "=== Running C++ UDP Stream System Tests ==="
+	@chmod +x test_cpp_system.sh
+	@./test_cpp_system.sh
 
-test-race:
-	$(GO) test -race -v ./pkg/stream/...
+# Performance test
+perf-test: $(SENDER) $(RECEIVER)
+	@echo "=== Running Performance Tests ==="
+	@chmod +x test_performance.sh
+	@./test_performance.sh
 
-test-bench:
-	$(GO) test -bench=. -benchmem ./pkg/stream/...
+# Benchmark
+benchmark: $(SENDER) $(RECEIVER)
+	@echo "=== Running Benchmarks ==="
+	@chmod +x benchmark.sh
+	@./benchmark.sh
 
-# Performance testing
-perf-test: build
-	@echo "Starting performance test..."
-	@echo "1. Start receiver in background..."
-	@$(RECEIVER_BINARY) -output=perf_test_output.bin -port=8081 &
-	@sleep 2
-	@echo "2. Start sender..."
-	@$(SENDER_BINARY) -input=test.bin -remote=localhost -port=8081
-	@echo "3. Cleanup..."
-	@pkill -f receiver || true
-	@rm -f perf_test_output.bin
+# Create test data
+test-data:
+	@echo "Creating test data..."
+	@dd if=/dev/urandom of=test_data.bin bs=1M count=10 2>/dev/null
+	@echo "Test data created: test_data.bin (10MB)"
 
-# Generate test data
-generate-test-data:
-	@echo "Generating 100MB test file..."
-	@dd if=/dev/urandom of=test.bin bs=1M count=100 2>/dev/null || \
-		$(GO) run -e 'package main; import "crypto/rand"; import "os"; b := make([]byte, 100*1024*1024); rand.Read(b); os.WriteFile("test.bin", b, 0644)' 2>/dev/null || \
-		echo "Please install dd or create test.bin manually"
+# Run with different configurations
+test-basic: $(SENDER) $(RECEIVER)
+	@echo "=== Basic UDP Transfer Test ==="
+	@./test_cpp_system.sh basic
 
-# Clean targets
-clean:
-	rm -rf $(BINARY_DIR)
-	rm -f test.bin received.bin perf_test_output.bin
+test-fec: $(SENDER) $(RECEIVER)
+	@echo "=== UDP Transfer with FEC Test ==="
+	@./test_cpp_system.sh fec
 
-# Install dependencies
-deps:
-	$(GO) mod download
-	$(GO) mod tidy
+test-continuous: $(SENDER) $(RECEIVER)
+	@echo "=== Continuous Mode Test ==="
+	@./test_cpp_system.sh continuous
 
-# Lint and format
-lint:
-	golangci-lint run
+test-link-monitor: $(SENDER) $(RECEIVER)
+	@echo "=== Link Monitoring Test ==="
+	@./test_cpp_system.sh link-monitor
 
-format:
-	$(GO) fmt ./...
-	$(GO) vet ./...
+# Documentation
+docs:
+	@echo "=== Generating Documentation ==="
+	@mkdir -p docs
+	@echo "# High-Throughput UDP Stream System" > docs/README.md
+	@echo "" >> docs/README.md
+	@echo "## Features" >> docs/README.md
+	@echo "- 1024-byte UDP payload transfer" >> docs/README.md
+	@echo "- Bit-perfect transmission" >> docs/README.md
+	@echo "- Link interruption awareness and resync" >> docs/README.md
+	@echo "- Continuous mode with multiple data sinks" >> docs/README.md
+	@echo "- Forward Error Correction (FEC)" >> docs/README.md
+	@echo "- High-performance optimized for 7+ Gbps" >> docs/README.md
 
-# Docker targets
-docker-build:
-	docker build -t high-throughput-stream .
+# Package for distribution
+package: clean all docs
+	@echo "=== Creating Package ==="
+	@mkdir -p package
+	@cp $(SENDER) $(RECEIVER) package/
+	@cp -r docs package/
+	@cp test_cpp_system.sh package/
+	@cp README.md package/
+	@tar -czf high-throughput-udp-stream.tar.gz package/
+	@rm -rf package
+	@echo "Package created: high-throughput-udp-stream.tar.gz"
 
-docker-run-sender:
-	docker run --network host high-throughput-stream sender -input=test.bin -remote=localhost -port=8080
+# Development targets
+dev: CXXFLAGS += -g -O0 -DDEBUG
+dev: clean all
 
-docker-run-receiver:
-	docker run --network host high-throughput-stream receiver -output=received.bin -local=0.0.0.0 -port=8080
+# Release build
+release: CXXFLAGS += -DNDEBUG -O3 -march=native
+release: clean all
 
 # Help
 help:
 	@echo "Available targets:"
-	@echo "  build          - Build sender and receiver binaries"
-	@echo "  sender         - Build sender binary only"
-	@echo "  receiver       - Build receiver binary only"
-	@echo "  dev-sender     - Run sender in development mode"
-	@echo "  dev-receiver   - Run receiver in development mode"
-	@echo "  test           - Run tests"
-	@echo "  test-race      - Run tests with race detection"
-	@echo "  test-bench     - Run benchmarks"
-	@echo "  perf-test      - Run performance test"
-	@echo "  generate-test-data - Generate test data file"
-	@echo "  clean          - Clean build artifacts"
-	@echo "  deps           - Install dependencies"
-	@echo "  lint           - Run linter"
-	@echo "  format         - Format code"
-	@echo "  docker-build   - Build Docker image"
-	@echo "  help           - Show this help"
+	@echo "  all          - Build sender and receiver (default)"
+	@echo "  clean        - Remove build artifacts"
+	@echo "  install-deps - Install system dependencies"
+	@echo "  test         - Run all tests"
+	@echo "  perf-test    - Run performance tests"
+	@echo "  benchmark    - Run benchmarks"
+	@echo "  test-data    - Create test data files"
+	@echo "  test-basic   - Run basic UDP transfer test"
+	@echo "  test-fec     - Run UDP transfer with FEC test"
+	@echo "  test-continuous - Run continuous mode test"
+	@echo "  test-link-monitor - Run link monitoring test"
+	@echo "  docs         - Generate documentation"
+	@echo "  package      - Create distribution package"
+	@echo "  dev          - Development build with debug info"
+	@echo "  release      - Optimized release build"
+	@echo "  help         - Show this help message"
 
-# Example usage
-example:
-	@echo "Example usage:"
-	@echo ""
-	@echo "1. Start receiver:"
-	@echo "   ./bin/receiver -output=received.bin -port=8080"
-	@echo ""
-	@echo "2. Start sender:"
-	@echo "   ./bin/sender -input=test.bin -remote=localhost -port=8080"
-	@echo ""
-	@echo "3. With FEC enabled:"
-	@echo "   ./bin/sender -input=test.bin -remote=localhost -port=8080 -fec"
-	@echo "   ./bin/receiver -output=received.bin -port=8080 -fec"
-	@echo ""
-	@echo "4. With custom configuration:"
-	@echo "   ./bin/sender -config=config.yaml -input=test.bin"
-	@echo "   ./bin/receiver -config=config.yaml -output=received.bin"
+.PHONY: all clean install-deps test perf-test benchmark test-data test-basic test-fec test-continuous test-link-monitor docs package dev release help
