@@ -6,12 +6,14 @@ network:
   local_addr: "0.0.0.0"
   remote_addr: "localhost"
   port: 8080
+  use_udp: false  # Use UDP instead of TCP
 
 # Performance configuration
 performance:
   buffer_size: 1048576  # 1MB buffer
   packet_size: 8192     # 8KB packets for optimal throughput
   window_size: 1000     # Sliding window size
+  udp_payload_size: 1024 # 1024-byte UDP payload size
 
 # Forward Error Correction (FEC) configuration
 fec:
@@ -23,6 +25,20 @@ timing:
   timeout: 30s          # Connection timeout
   retry_interval: 100ms # Packet retransmission interval
   heartbeat_interval: 1s # Heartbeat interval
+
+# Link monitoring configuration
+link_monitoring:
+  enable: false         # Enable link interruption detection
+  interval: 1s          # How often to check link status
+  timeout: 5s           # Time to wait before declaring link down
+
+# Continuous mode configuration
+continuous_mode:
+  enable: false         # Run in continuous mode
+  data_sink: "disk"     # Data sink: disk, ram, or none
+  output_directory: "./output"  # Directory for saving files
+  max_file_size: 104857600  # 100MB maximum file size before rotation
+  enable_file_rotation: false  # Enable automatic file rotation
 
 # Logging configuration
 logging:

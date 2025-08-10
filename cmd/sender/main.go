@@ -24,6 +24,20 @@ func main() {
 		fileFormat = flag.String("format", "bin", "File format (bin or pcap)")
 		enableFEC  = flag.Bool("fec", false, "Enable Forward Error Correction")
 		verbose    = flag.Bool("verbose", false, "Enable verbose logging")
+		
+		// New UDP and link monitoring options
+		useUDP              = flag.Bool("udp", false, "Use UDP instead of TCP")
+		udpPayloadSize      = flag.Int("udp-payload", 1024, "UDP payload size in bytes")
+		enableLinkMonitor   = flag.Bool("link-monitor", false, "Enable link interruption monitoring")
+		linkTimeout         = flag.Duration("link-timeout", 5*time.Second, "Link timeout duration")
+		linkMonitorInterval = flag.Duration("link-monitor-interval", 1*time.Second, "Link monitoring interval")
+		
+		// Continuous mode options
+		continuousMode      = flag.Bool("continuous", false, "Run in continuous mode")
+		dataSink            = flag.String("data-sink", "disk", "Data sink: disk, ram, or none")
+		outputDirectory     = flag.String("output-dir", "./output", "Output directory for continuous mode")
+		maxFileSize         = flag.Int64("max-file-size", 100*1024*1024, "Maximum file size before rotation (bytes)")
+		enableFileRotation  = flag.Bool("file-rotation", false, "Enable file rotation in continuous mode")
 	)
 	flag.Parse()
 
@@ -51,18 +65,40 @@ func main() {
 	if *verbose {
 		config.LogLevel = "debug"
 	}
+	
+	// New UDP and link monitoring options
+	if *useUDP {
+		config.UseUDP = true
+		config.UDPPayloadSize = *udpPayloadSize
+	}
+	if *enableLinkMonitor {
+		config.EnableLinkMonitoring = true
+		config.LinkTimeout = *linkTimeout
+		config.LinkMonitorInterval = *linkMonitorInterval
+	}
+	
+	// Continuous mode options
+	if *continuousMode {
+		config.ContinuousMode = true
+		config.DataSink = *dataSink
+		config.OutputDirectory = *outputDirectory
+		config.MaxFileSize = *maxFileSize
+		config.EnableFileRotation = *enableFileRotation
+	}
 
 	// Validate required parameters
-	if config.InputFile == "" {
-		fmt.Fprintf(os.Stderr, "Error: Input file is required\n")
+	if config.InputFile == "" && !config.ContinuousMode {
+		fmt.Fprintf(os.Stderr, "Error: Input file is required (unless in continuous mode)\n")
 		flag.Usage()
 		os.Exit(1)
 	}
 
-	// Check if input file exists
-	if _, err := os.Stat(config.InputFile); os.IsNotExist(err) {
-		fmt.Fprintf(os.Stderr, "Error: Input file %s does not exist\n", config.InputFile)
-		os.Exit(1)
+	// Check if input file exists (only if not in continuous mode)
+	if config.InputFile != "" && !config.ContinuousMode {
+		if _, err := os.Stat(config.InputFile); os.IsNotExist(err) {
+			fmt.Fprintf(os.Stderr, "Error: Input file %s does not exist\n", config.InputFile)
+			os.Exit(1)
+		}
 	}
 
 	// Setup logging
@@ -72,8 +108,21 @@ func main() {
 	logger.Info("Starting high-throughput sender")
 	logger.Infof("Configuration: %+v", config)
 
-	// Create sender
-	sender := stream.NewSender(config)
+	// Create sender based on protocol
+	var sender interface {
+		Connect() error
+		SendFile() error
+		GetStats() *stream.StreamStats
+		Close() error
+	}
+	
+	if config.UseUDP {
+		sender = stream.NewUDPSender(config)
+		logger.Info("Using UDP sender")
+	} else {
+		sender = stream.NewSender(config)
+		logger.Info("Using TCP sender")
+	}
 
 	// Setup signal handling for graceful shutdown
 	sigChan := make(chan os.Signal, 1)
@@ -102,8 +151,8 @@ func main() {
 			case <-ticker.C:
 				stats := sender.GetStats()
 				throughputGbps := stream.ConvertToGbps(stats.Throughput)
-				logger.Infof("Progress: %d bytes sent, %.2f Gbps, %d packets sent, %d retransmitted",
-					stats.BytesSent, throughputGbps, stats.PacketsSent, stats.PacketsRetransmitted)
+				logger.Infof("Progress: %d bytes sent, %.2f Gbps, %d packets sent, %d retransmitted, Link: %v",
+					stats.BytesSent, throughputGbps, stats.PacketsSent, stats.PacketsRetransmitted, stats.LastLinkStatus)
 			case <-transferDone:
 				return
 			}
@@ -131,6 +180,8 @@ func main() {
 		fmt.Printf("Packets Retransmitted: %d\n", stats.PacketsRetransmitted)
 		fmt.Printf("Average Throughput: %.2f Gbps\n", throughputGbps)
 		fmt.Printf("Errors: %d\n", stats.Errors)
+		fmt.Printf("Link Interruptions: %d\n", stats.LinkInterruptions)
+		fmt.Printf("Resync Count: %d\n", stats.ResyncCount)
 		
 		if stats.FECPacketsSent > 0 {
 			fmt.Printf("FEC Packets Sent: %d\n", stats.FECPacketsSent)
@@ -151,11 +202,13 @@ func loadConfig(configFile string) *stream.StreamConfig {
 		LocalAddr:  "0.0.0.0",
 		RemoteAddr: "localhost",
 		Port:       8080,
+		UseUDP:     false,
 
 		// Performance configuration
-		BufferSize: stream.DefaultBufferSize,
-		PacketSize: 8192,
-		WindowSize: stream.DefaultWindowSize,
+		BufferSize:     stream.DefaultBufferSize,
+		PacketSize:     8192,
+		WindowSize:     stream.DefaultWindowSize,
+		UDPPayloadSize: stream.DefaultUDPPayloadSize,
 
 		// FEC configuration
 		EnableFEC:     false,
@@ -165,6 +218,18 @@ func loadConfig(configFile string) *stream.StreamConfig {
 		Timeout:           30 * time.Second,
 		RetryInterval:     100 * time.Millisecond,
 		HeartbeatInterval: 1 * time.Second,
+		
+		// Link monitoring configuration
+		LinkMonitorInterval: 1 * time.Second,
+		LinkTimeout:         5 * time.Second,
+		EnableLinkMonitoring: false,
+		
+		// Continuous mode configuration
+		ContinuousMode:      false,
+		DataSink:            "disk",
+		OutputDirectory:     "./output",
+		MaxFileSize:         100 * 1024 * 1024, // 100MB
+		EnableFileRotation:  false,
 
 		// Logging
 		LogLevel:      "info",
@@ -186,6 +251,9 @@ func loadConfig(configFile string) *stream.StreamConfig {
 			if viper.IsSet("network.port") {
 				config.Port = viper.GetInt("network.port")
 			}
+			if viper.IsSet("network.use_udp") {
+				config.UseUDP = viper.GetBool("network.use_udp")
+			}
 			if viper.IsSet("performance.buffer_size") {
 				config.BufferSize = viper.GetInt("performance.buffer_size")
 			}
@@ -194,6 +262,9 @@ func loadConfig(configFile string) *stream.StreamConfig {
 			}
 			if viper.IsSet("performance.window_size") {
 				config.WindowSize = viper.GetInt("performance.window_size")
+			}
+			if viper.IsSet("performance.udp_payload_size") {
+				config.UDPPayloadSize = viper.GetInt("performance.udp_payload_size")
 			}
 			if viper.IsSet("fec.enable") {
 				config.EnableFEC = viper.GetBool("fec.enable")
@@ -209,6 +280,30 @@ func loadConfig(configFile string) *stream.StreamConfig {
 			}
 			if viper.IsSet("timing.heartbeat_interval") {
 				config.HeartbeatInterval = viper.GetDuration("timing.heartbeat_interval")
+			}
+			if viper.IsSet("link_monitoring.enable") {
+				config.EnableLinkMonitoring = viper.GetBool("link_monitoring.enable")
+			}
+			if viper.IsSet("link_monitoring.interval") {
+				config.LinkMonitorInterval = viper.GetDuration("link_monitoring.interval")
+			}
+			if viper.IsSet("link_monitoring.timeout") {
+				config.LinkTimeout = viper.GetDuration("link_monitoring.timeout")
+			}
+			if viper.IsSet("continuous_mode.enable") {
+				config.ContinuousMode = viper.GetBool("continuous_mode.enable")
+			}
+			if viper.IsSet("continuous_mode.data_sink") {
+				config.DataSink = viper.GetString("continuous_mode.data_sink")
+			}
+			if viper.IsSet("continuous_mode.output_directory") {
+				config.OutputDirectory = viper.GetString("continuous_mode.output_directory")
+			}
+			if viper.IsSet("continuous_mode.max_file_size") {
+				config.MaxFileSize = viper.GetInt64("continuous_mode.max_file_size")
+			}
+			if viper.IsSet("continuous_mode.enable_file_rotation") {
+				config.EnableFileRotation = viper.GetBool("continuous_mode.enable_file_rotation")
 			}
 			if viper.IsSet("logging.level") {
 				config.LogLevel = viper.GetString("logging.level")

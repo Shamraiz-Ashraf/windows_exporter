@@ -28,11 +28,13 @@ type StreamConfig struct {
 	LocalAddr  string
 	RemoteAddr string
 	Port       int
+	UseUDP     bool // Use UDP instead of TCP
 	
 	// Performance configuration
 	BufferSize     int // Size of send/receive buffers
-	PacketSize     int // Maximum packet size
+	PacketSize     int // Maximum packet size (1024 for UDP)
 	WindowSize     int // Sliding window size for flow control
+	UDPPayloadSize int // Fixed UDP payload size (1024 bytes)
 	
 	// FEC configuration
 	EnableFEC      bool
@@ -42,6 +44,18 @@ type StreamConfig struct {
 	Timeout        time.Duration
 	RetryInterval  time.Duration
 	HeartbeatInterval time.Duration
+	
+	// Link monitoring configuration
+	LinkMonitorInterval time.Duration // How often to check link status
+	LinkTimeout         time.Duration // Time to wait before declaring link down
+	EnableLinkMonitoring bool         // Enable link interruption detection
+	
+	// Continuous mode configuration
+	ContinuousMode      bool // Run in continuous mode
+	DataSink            string // "disk", "ram", "none"
+	OutputDirectory     string // Directory for saving files in continuous mode
+	MaxFileSize         int64  // Maximum file size before rotation
+	EnableFileRotation  bool   // Enable file rotation in continuous mode
 	
 	// File configuration
 	InputFile      string
@@ -68,6 +82,15 @@ type StreamStats struct {
 	Throughput     float64 // bytes per second
 	Latency        time.Duration
 	Errors         uint64
+	
+	// Link monitoring stats
+	LinkInterruptions uint64
+	LastLinkStatus    bool
+	ResyncCount       uint64
+	
+	// Continuous mode stats
+	FilesCreated      uint64
+	CurrentFileSize   int64
 }
 
 // StreamState represents the current state of the stream
@@ -78,6 +101,8 @@ const (
 	StateConnecting
 	StateConnected
 	StateTransferring
+	StateLinkInterrupted
+	StateResyncing
 	StateCompleted
 	StateError
 )
@@ -90,6 +115,14 @@ type FECConfig struct {
 	MaxErrors      int     // Maximum correctable errors per block
 }
 
+// LinkStatus represents the current link status
+type LinkStatus struct {
+	IsConnected    bool
+	LastHeartbeat  time.Time
+	Interruptions  uint64
+	LastResync     time.Time
+}
+
 // Constants
 const (
 	PacketHeaderSize = 32 // Size of PacketHeader in bytes
@@ -97,6 +130,7 @@ const (
 	MaxPacketSize    = 65536
 	DefaultBufferSize = 1024 * 1024 // 1MB
 	DefaultWindowSize = 1000
+	DefaultUDPPayloadSize = 1024 // 1024 bytes as required
 )
 
 // Packet flags
@@ -106,6 +140,9 @@ const (
 	FlagHeartbeat    = 0x0004
 	FlagEndOfStream  = 0x0008
 	FlagCompressed   = 0x0010
+	FlagLinkStatus   = 0x0020
+	FlagResync       = 0x0040
+	FlagUDPPayload   = 0x0080
 )
 
 // SerializeHeader serializes the packet header to bytes
